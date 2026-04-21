@@ -1,38 +1,57 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { db } from '../firebase';
+import { collection, onSnapshot, addDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
 
 const FinanceContext = createContext();
 
 export const useFinance = () => useContext(FinanceContext);
 
 export const FinanceProvider = ({ children }) => {
-  const [transactions, setTransactions] = useState(() => {
-    const saved = localStorage.getItem('family_finance_data');
-    if (saved) {
-      return JSON.parse(saved);
-    }
-    return [
-      // Mock data
-      { id: '1', type: 'income', amount: 20000000, category: 'Lương', date: new Date().toISOString(), note: 'Lương tháng này' },
-      { id: '2', type: 'expense', amount: 5000000, category: 'Sinh hoạt', date: new Date(Date.now() - 86400000).toISOString(), note: 'Tiền chợ' },
-      { id: '3', type: 'expense', amount: 1500000, category: 'Hoá đơn', date: new Date(Date.now() - 86400000 * 2).toISOString(), note: 'Tiền điện nước' }
-    ];
-  });
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    localStorage.setItem('family_finance_data', JSON.stringify(transactions));
-  }, [transactions]);
+    // Reference to the 'transactions' collection in Firestore
+    const transactionsRef = collection(db, 'transactions');
+    // Query: order by date descending
+    const q = query(transactionsRef, orderBy('date', 'desc'));
 
-  const addTransaction = (transaction) => {
-    const newTransaction = {
-      ...transaction,
-      id: Date.now().toString(),
-      amount: Number(transaction.amount) // Ensure it's a number
-    };
-    setTransactions(prev => [newTransaction, ...prev]);
+    // Real-time listener
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const data = [];
+      querySnapshot.forEach((doc) => {
+        data.push({ id: doc.id, ...doc.data() });
+      });
+      setTransactions(data);
+      setLoading(false);
+    }, (error) => {
+      console.error("Error fetching transactions from Firestore:", error);
+      setLoading(false);
+    });
+
+    // Cleanup listener on unmount
+    return () => unsubscribe();
+  }, []);
+
+  const addTransaction = async (transaction) => {
+    try {
+      const newTransaction = {
+        ...transaction,
+        amount: Number(transaction.amount) // Ensure it's a number
+      };
+      await addDoc(collection(db, 'transactions'), newTransaction);
+    } catch (error) {
+      console.error("Error adding transaction: ", error);
+      alert("Đã có lỗi xảy ra khi lưu trên đám mây. Vui lòng kiểm tra quyền truy cập (Test mode) của Firestore!");
+    }
   };
 
-  const deleteTransaction = (id) => {
-    setTransactions(prev => prev.filter(t => t.id !== id));
+  const deleteTransaction = async (id) => {
+    try {
+      await deleteDoc(doc(db, 'transactions', id));
+    } catch (error) {
+      console.error("Error deleting transaction: ", error);
+    }
   };
 
   const incomes = transactions.filter(t => t.type === 'income');
@@ -50,7 +69,8 @@ export const FinanceProvider = ({ children }) => {
     expenses,
     totalIncome,
     totalExpense,
-    balance
+    balance,
+    loading
   };
 
   return (
